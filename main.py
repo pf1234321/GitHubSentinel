@@ -1,24 +1,34 @@
-# GitHub Sentinel
-from subscription_manager import SubscriptionManager
-from updater import Updater
-from notifier import Notifier
+# main.py
+from updater import GitHubClient
 from report_generator import ReportGenerator
+from llm import LLM
+from datetime import datetime
 
-class GitHubSentinel:
-    def __init__(self):
-        self.subscription_manager = SubscriptionManager()
-        self.updater = Updater(self.subscription_manager)
-        self.notifier = Notifier()
-        self.report_generator = ReportGenerator()
 
-    def run(self):
-        subscriptions = self.subscription_manager.get_subscriptions()
-        updates = self.updater.fetch_updates(subscriptions)
-        self.notifier.send_notifications(updates)
-        report = self.report_generator.generate_report(updates)
-        return report
+def main():
+    github_client = GitHubClient()
+    llm = LLM()
+    report_generator = ReportGenerator(llm)
 
-if __name__ == '__main__':
-    sentinel = GitHubSentinel()
-    report = sentinel.run()
-    print(report)
+    while True:
+        command = input("请输入命令（progress、report、quit）：")
+
+        if command == "progress":
+            repo_url = input("请输入仓库 URL：")
+            github_client.export_progress_to_markdown(repo_url)
+
+        elif command == "report":
+            repo_name = input("请输入仓库名称：")
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            report_generator.generate_daily_report(repo_name, date_str)
+
+        elif command == "quit":
+            print("退出 GitHub Sentinel...")
+            break
+
+        else:
+            print("未知命令。请输入 'progress'、'report' 或 'quit'。")
+
+
+if __name__ == "__main__":
+    main()
