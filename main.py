@@ -1,43 +1,62 @@
-import configparser
-from scheduler import Scheduler
+# main.py
+import gradio as gr
+from datetime import datetime
+from updater import GitHubClient
+from report_generator import ReportGenerator
+from llm import LLM
 
-def main():
-    # 加载配置文件
-    config = configparser.ConfigParser()
-    config.read("config.ini")
+# 初始化各个模块
+github_client = GitHubClient()
+llm = LLM()
+report_generator = ReportGenerator(llm)
 
-    # 从配置文件中获取 GitHub 和 OpenAI API 密钥
-    github_token = config.get("github", "api_token")
-    openai_key = config.get("openai", "api_key")
 
-    # 初始化订阅的仓库列表
-    repos = []
+# 定义生成每日进展的函数
+def generate_progress(repo_url):
+    try:
+        print(f"正在生成 {repo_url} 的每日进展...")
+        print(github_client)
+        github_client.export_progress_to_markdown(repo_url)
+        return f"进展文件生成成功：{repo_url.split('/')[-1]}_{datetime.now().strftime('%Y-%m-%d')}.md"
+    except Exception as e:
+        return f"生成进展文件失败: {e}"
 
-    print("欢迎使用 GitHub Sentinel 订阅系统！")
-    print("请输入要订阅的 GitHub 仓库 URL。输入 'done' 完成订阅。")
 
-    # 循环输入订阅仓库 URL
-    while True:
-        repo_url = input("请输入 GitHub 仓库 URL 或输入 'done' 完成：")
-        if repo_url.lower() == 'done':
-            break
-        elif repo_url.startswith("https://github.com/"):
-            repos.append(repo_url)
-            print(f"已添加仓库：{repo_url}")
-        else:
-            print("无效的 URL，请输入有效的 GitHub 仓库 URL。")
+# 定义生成每日报告的函数
+def generate_report(repo_name):
+    try:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        report_generator.generate_daily_report(repo_name, date_str)
+        return f"每日项目报告生成成功：{repo_name}_daily_report_{date_str}.md"
+    except Exception as e:
+        return f"生成每日项目报告失败: {e}"
 
-    if not repos:
-        print("没有订阅任何仓库。程序已退出。")
-        return
 
-    # 初始化 Scheduler
-    scheduler = Scheduler(repos, github_token, openai_key)
+# 定义 Gradio 界面
+with gr.Blocks() as gui:
+    gr.Markdown("# GitHub Sentinel - 项目管理工具")
 
-    # 设定每日定时任务
-    hour = int(input("请输入每日任务的小时（0-23）："))
-    minute = int(input("请输入每日任务的分钟（0-59）："))
-    scheduler.schedule_daily_task(hour=hour, minute=minute)
+    with gr.Tab("生成每日进展"):
+        repo_url_input = gr.Textbox(label="GitHub 仓库 URL",
+                                    placeholder="例如：https://github.com/langchain-ai/langchain")
+        progress_button = gr.Button("生成每日进展")
+        progress_output = gr.Textbox(label="输出")
 
+        # 绑定按钮与函数
+        progress_button.click(fn=generate_progress, inputs=repo_url_input, outputs=progress_output)
+
+    with gr.Tab("生成每日报告"):
+        repo_name_input = gr.Textbox(label="仓库名称", placeholder="例如：langchain")
+        report_button = gr.Button("生成每日报告")
+        report_output = gr.Textbox(label="输出")
+
+        # 绑定按钮与函数
+        report_button.click(fn=generate_report, inputs=repo_name_input, outputs=report_output)
+
+    # 显示退出按钮
+    quit_button = gr.Button("退出")
+    quit_button.click(lambda: "应用已退出", None, None)
+
+# 运行 Gradio 应用
 if __name__ == "__main__":
-    main()
+    gui.launch(share=True)
