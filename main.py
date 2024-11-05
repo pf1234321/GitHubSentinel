@@ -1,62 +1,143 @@
-# main.py
-import gradio as gr
-from datetime import datetime
-from updater import GitHubClient
-from report_generator import ReportGenerator
-from llm import LLM
+import smtplib
+import requests
+import threading
+import schedule
+import time
+from datetime import datetime, timedelta
+from bs4 import BeautifulSoup
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import configparser
 
-# 初始化各个模块
-github_client = GitHubClient()
-llm = LLM()
-report_generator = ReportGenerator(llm)
+# 读取配置文件
+config = configparser.ConfigParser()
+config.read('config.ini')
+
+# 邮件配置信息
+smtp_server = config['EmailConfig']['smtp_server']
+smtp_port = int(config['EmailConfig']['smtp_port'])
+sender_email = config['EmailConfig']['sender_email']
+
+# 支持多个接收邮箱
+receiver_emails = config['EmailConfig']['receiver_email'].split(',')
+
+email_password = config['EmailConfig']['email_password']
 
 
-# 定义生成每日进展的函数
-def generate_progress(repo_url):
+def send_email(subject, body):
+    """ 发送邮件函数 """
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+
+    # 将多个接收邮箱作为收件人
+    msg['To'] = ', '.join(receiver_emails)
+
     try:
-        print(f"正在生成 {repo_url} 的每日进展...")
-        print(github_client)
-        github_client.export_progress_to_markdown(repo_url)
-        return f"进展文件生成成功：{repo_url.split('/')[-1]}_{datetime.now().strftime('%Y-%m-%d')}.md"
+        # 使用 TLS 加密连接
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()  # 启用 TLS 加密
+            server.login(sender_email, email_password)  # 使用授权码进行登录
+            server.sendmail(sender_email, receiver_emails, msg.as_string())
+        print("邮件发送成功！")
     except Exception as e:
-        return f"生成进展文件失败: {e}"
+        print(f"邮件发送失败: {e}")
 
 
-# 定义生成每日报告的函数
-def generate_report(repo_name):
-    try:
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        report_generator.generate_daily_report(repo_name, date_str)
-        return f"每日项目报告生成成功：{repo_name}_daily_report_{date_str}.md"
-    except Exception as e:
-        return f"生成每日项目报告失败: {e}"
+def fetch_hacker_news():
+    """ 获取 Hacker News 热门新闻 """
+    url = "https://news.ycombinator.com/"
+    response = requests.get(url)
+    response.raise_for_status()
+
+    # 解析 HTML 内容
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # 找到所有新闻条目
+    items = soup.select('.athing')
+
+    news_data = []
+    for item in items:
+        title_tag = item.select_one('.storylink')
+        title = title_tag.get_text() if title_tag else None
+        link = title_tag['href'] if title_tag else None
+        subtext = item.find_next_sibling('tr').select_one('.subtext')
+
+        if subtext:
+            score = subtext.select_one('.score')
+            score = int(score.get_text().split()[0]) if score else 0
+
+            # 提取日期并处理
+            age_tag = subtext.select_one('.age a')
+            age = age_tag.get_text() if age_tag else "unknown"
+
+            news_data.append({
+                'title': title,
+                'link': link,
+                'score': score,
+                'age': age
+            })
+
+    return news_data
 
 
-# 定义 Gradio 界面
-with gr.Blocks() as gui:
-    gr.Markdown("# GitHub Sentinel - 项目管理工具")
+def fetch_github_progress():
+    """ 模拟获取 GitHub 项目进展并生成报告 """
+    # 假设我们已经有 GitHub 项目进展的提取代码
+    repo_name = "GitHub-Sentinel"
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    issues = ["Issue 1", "Issue 2", "Issue 3"]
+    pull_requests = ["PR 1", "PR 2", "PR 3"]
 
-    with gr.Tab("生成每日进展"):
-        repo_url_input = gr.Textbox(label="GitHub 仓库 URL",
-                                    placeholder="例如：https://github.com/langchain-ai/langchain")
-        progress_button = gr.Button("生成每日进展")
-        progress_output = gr.Textbox(label="输出")
+    report = f"GitHub 项目报告 - {repo_name} ({date_str})\n\n"
+    report += "## Issues\n" + "\n".join([f"- {issue}" for issue in issues]) + "\n\n"
+    report += "## Pull Requests\n" + "\n".join([f"- {pr}" for pr in pull_requests]) + "\n"
 
-        # 绑定按钮与函数
-        progress_button.click(fn=generate_progress, inputs=repo_url_input, outputs=progress_output)
+    send_email(f"GitHub 项目进展报告 - {repo_name}", report)
+    print(f"GitHub 项目报告已发送：{repo_name}")
 
-    with gr.Tab("生成每日报告"):
-        repo_name_input = gr.Textbox(label="仓库名称", placeholder="例如：langchain")
-        report_button = gr.Button("生成每日报告")
-        report_output = gr.Textbox(label="输出")
 
-        # 绑定按钮与函数
-        report_button.click(fn=generate_report, inputs=repo_name_input, outputs=report_output)
+def hacker_news_report():
+    """ 获取 Hacker News 热门新闻并发送报告 """
+    news_data = fetch_hacker_news()
+    report = "Hacker News 热门新闻报告\n\n"
+    for news in news_data[:5]:  # 只取前5条新闻
+        report += f"标题: {news['title']}\n链接: {news['link']}\n分数: {news['score']}\n年龄: {news['age']}\n\n"
 
-    # 显示退出按钮
-    quit_button = gr.Button("退出")
-    quit_button.click(lambda: "应用已退出", None, None)
+    send_email("Hacker News 热门新闻报告", report)
+    print("Hacker News 热门新闻报告已发送！")
 
-# 运行 Gradio 应用
+
+def schedule_github_progress():
+    """ 设置 GitHub 项目进展的定时任务 """
+    schedule.every().day.at("09:00").do(fetch_github_progress)
+
+
+def schedule_hacker_news():
+    """ 设置获取 Hacker News 热门新闻的定时任务 """
+    schedule.every().hour.do(hacker_news_report)
+
+
+def start_scheduler():
+    """ 启动调度器，执行守护进程任务 """
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+
+# 启动守护进程来获取 GitHub 项目进展和 Hacker News 热门新闻
 if __name__ == "__main__":
-    gui.launch(share=True)
+    # 启动 GitHub 项目进展调度
+    schedule_github_progress()
+
+    # 启动 Hacker News 新闻调度
+    schedule_hacker_news()
+
+    # 在后台启动调度器守护进程
+    scheduler_thread = threading.Thread(target=start_scheduler, daemon=True)
+    scheduler_thread.start()
+
+    print("守护进程正在运行...")
+    while True:
+        time.sleep(60)  # 主线程保持运行
